@@ -1,0 +1,14 @@
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+python-dotenv==1.0.1
+pydantic-settings==2.7.1
+
+# Database
+supabase==2.11.0
+
+# Satellite imagery
+earthengine-api==1.4.3
+
+# ML / CV — add torch or tensorflow here once the segmentation model is built
+scikit-learn==1.6.1
+numpy==2.2.1
