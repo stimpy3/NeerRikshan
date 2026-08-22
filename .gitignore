@@ -42,3 +42,20 @@ Thumbs.db
 
 # Logs
 *.log
+
+# Pipeline scratch — regenerable GEE query results, not source of truth
+server/data/_intermediate/
+
+# Large regenerable pipeline outputs - reproducible via server/scripts/*.py,
+# not source of truth. Small per-lake JSON summaries ARE committed (they're
+# what the API actually serves and what the README calls "committed artifacts").
+server/data/patches/
+server/data/models/
+server/data/thumbnails/
+server/data/labels_kv2026/
+server/data/_intermediate/
+server/data/kv_rings_*.json
+server/data/*.bak.json
+
+# Local tool config, not project source
+.claude/

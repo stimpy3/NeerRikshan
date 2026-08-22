@@ -2,7 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import settings
-from app.routers import wetlands
+from app.routers import lakes
 
 app = FastAPI(title="NeerRikshan API")
 
@@ -13,7 +13,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-app.include_router(wetlands.router)
+app.include_router(lakes.router)
 
 
 @app.get("/health")

@@ -3,12 +3,9 @@ uvicorn[standard]==0.34.0
 python-dotenv==1.0.1
 pydantic-settings==2.7.1
 
-# Database
+# Database — unused in Phase 1, reserved for later
 supabase==2.11.0
 
-# Satellite imagery
+# Pipeline only (server/scripts/). The API never imports these.
 earthengine-api==1.4.3
-
-# ML / CV — add torch or tensorflow here once the segmentation model is built
-scikit-learn==1.6.1
-numpy==2.2.1
+requests==2.34.2

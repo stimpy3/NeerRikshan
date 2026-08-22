@@ -1,2 +1,22 @@
 @import "tailwindcss";
 @import "maplibre-gl/dist/maplibre-gl.css";
+
+@theme {
+  --font-sans: "Barlow", system-ui, sans-serif;
+  --font-condensed: "Barlow Condensed", sans-serif;
+
+  --color-canvas: #e7e7e6;
+  --color-ink: #1d1f20;
+  --color-paper: #f2f2f3;
+  --color-steel: #5980a6;
+  --color-steel-d: #3d5c7a;
+  --color-line: rgba(29, 31, 32, 0.2);
+  --color-fill: rgba(89, 128, 166, 0.07);
+  --color-muted: rgba(29, 31, 32, 0.55);
+}
+
+body {
+  background: var(--color-canvas);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+}

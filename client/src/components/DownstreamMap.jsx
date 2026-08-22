@@ -1,0 +1,116 @@
+import { useEffect, useRef } from 'react'
+import { Map, LngLatBounds, Marker, Popup, NavigationControl } from 'maplibre-gl'
+
+const STYLE_URL = 'https://tiles.openfreemap.org/styles/liberty'
+const LAKE = '#2e6fb4'
+const FLOW = '#8f1d1d'
+
+/**
+ * The traced flood path for one lake, with the populated clusters along it.
+ *
+ * The head-count in the panel above answers "how many"; this answers "where",
+ * which is the part someone deciding whether to drive up a valley actually
+ * needs. Settlement *names* are left to the basemap, which already labels them -
+ * our markers only assert that people are there, because GHSL is a population
+ * grid and cannot name a town.
+ *
+ * Marker size scales with population so the largest cluster is findable without
+ * reading every label.
+ */
+export default function DownstreamMap({ path, settlements, lake }) {
+  const boxRef = useRef(null)
+  const mapRef = useRef(null)
+
+  useEffect(() => {
+    if (!boxRef.current || !path?.length) return undefined
+    const map = new Map({
+      container: boxRef.current,
+      style: STYLE_URL,
+      center: path[0],
+      zoom: 7,
+      attributionControl: false,
+    })
+    mapRef.current = map
+    map.addControl(new NavigationControl({ showCompass: false }), 'top-right')
+
+    // Same attempt-and-retry as the main map: map.once('load') can never fire
+    // with this style, and gating on it leaves an empty map.
+    const draw = () => {
+      if (map.getSource('flow')) return true
+      try {
+        map.addSource('flow', {
+          type: 'geojson',
+          data: { type: 'Feature', geometry: { type: 'LineString', coordinates: path } },
+        })
+        map.addLayer({
+          id: 'flow-casing',
+          type: 'line',
+          source: 'flow',
+          layout: { 'line-cap': 'round', 'line-join': 'round' },
+          paint: { 'line-color': '#ffffff', 'line-width': 6, 'line-opacity': 0.9 },
+        })
+        map.addLayer({
+          id: 'flow-line',
+          type: 'line',
+          source: 'flow',
+          layout: { 'line-cap': 'round', 'line-join': 'round' },
+          paint: { 'line-color': FLOW, 'line-width': 2.5 },
+        })
+      } catch {
+        return false
+      }
+
+      new Marker({ color: LAKE })
+        .setLngLat(path[0])
+        .setPopup(new Popup({ offset: 12 }).setText(`${lake} — source`))
+        .addTo(map)
+
+      const biggest = Math.max(1, ...(settlements || []).map((s) => s.pop))
+      for (const s of settlements || []) {
+        const el = document.createElement('div')
+        const size = 8 + 14 * Math.sqrt(s.pop / biggest)
+        el.style.cssText = `width:${size}px;height:${size}px;border-radius:50%;
+          background:${FLOW};opacity:.75;border:1.5px solid #fff;cursor:pointer`
+        new Marker({ element: el })
+          .setLngLat([s.lon, s.lat])
+          .setPopup(
+            new Popup({ offset: 8 }).setText(
+              `~${s.pop.toLocaleString()} people · ${s.km} km downstream`,
+            ),
+          )
+          .addTo(map)
+      }
+
+      let b = new LngLatBounds(path[0], path[0])
+      path.forEach((c) => b.extend(c))
+      map.fitBounds(b, { padding: 28, duration: 0 })
+      return true
+    }
+
+    if (!draw()) {
+      const retry = () => { if (draw()) map.off('styledata', retry) }
+      map.on('styledata', retry)
+    }
+    return () => { map.remove(); mapRef.current = null }
+  }, [path, settlements, lake])
+
+  if (!path?.length) {
+    return (
+      <div className="border border-dashed border-line px-3 py-4 font-sans text-[11px] text-muted">
+        No downstream trace for this lake — paths are computed only for lakes with
+        confidently growing area.
+      </div>
+    )
+  }
+
+  return (
+    <div>
+      <div ref={boxRef} className="h-[260px] w-full border border-line" />
+      <p className="mt-1 font-sans text-[10px] leading-snug text-muted">
+        Red line = path water would follow downhill from the lake (HydroSHEDS
+        terrain routing). Circles = inhabited clusters on that path, sized by
+        population; click for numbers. Place names come from the basemap.
+      </p>
+    </div>
+  )
+}
