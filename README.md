@@ -115,18 +115,39 @@ Other limits, stated plainly:
 ## Quickstart
 
 ```bash
-# backend
-cd server
-python -m venv .venv && ./.venv/Scripts/pip install -r requirements.txt
-cp .env.example .env          # set GEE_PROJECT, then: earthengine authenticate
-./.venv/Scripts/python -m uvicorn app.main:app --port 8011
-
-# frontend
-cd client && npm install && npm run dev
+git clone https://github.com/<your-username>/NeerRikshan.git
+cd NeerRikshan
 ```
 
-The API reads committed JSON artifacts, so the UI runs without Earth Engine access.
-Regenerating them needs a registered GEE project:
+**Backend** — the API reads committed JSON artifacts, so this runs with no Earth
+Engine account and no GPU:
+
+```bash
+cd server
+python -m venv .venv
+source .venv/bin/activate        # Windows: .venv\Scripts\activate
+pip install -r requirements.txt
+cp .env.example .env             # leave GEE_PROJECT blank — not needed to browse the results
+python -m uvicorn app.main:app --port 8011
+```
+
+**Frontend**, in a second terminal:
+
+```bash
+cd client
+npm install
+echo "VITE_API_BASE_URL=http://localhost:8011" > .env
+npm run dev
+```
+
+Open the printed `localhost` URL — the full watchlist, map and per-lake pages are
+live against the committed data.
+
+Only regenerating the pipeline outputs yourself needs Earth Engine:
+1. Register a Cloud project at [console.cloud.google.com/earth-engine](https://console.cloud.google.com/earth-engine)
+   (noncommercial is free, no billing required)
+2. Run `earthengine authenticate` once — this caches a login outside the repo
+3. Set `GEE_PROJECT=<your-project-id>` in `server/.env`
 
 ```bash
 python -m scripts.plan_windows                                    # window per lake
