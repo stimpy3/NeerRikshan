@@ -56,6 +56,7 @@ server/data/labels_kv2026/
 server/data/_intermediate/
 server/data/kv_rings_*.json
 server/data/*.bak.json
+deploy/build/
 
 # Local tool config, not project source
 .claude/

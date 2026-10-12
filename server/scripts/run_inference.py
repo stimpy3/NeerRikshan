@@ -21,6 +21,10 @@ can decide, and so the flag counts themselves are inspectable.
 Usage:
     cd server
     python -m scripts.run_inference --model noterr --years 2019 2020 2021 2022 2023 2024 2025
+
+    # yearly update: score only the new season and merge it into the existing
+    # series, so the server never needs the earlier years' patches on disk
+    python -m scripts.run_inference --model ndwi_fit_kv22 --fit --years 2026 --append
 """
 
 from __future__ import annotations
@@ -161,11 +165,33 @@ def main() -> None:
     ap.add_argument("--nir-max", type=float, default=NIR_MAX_WATER)
     ap.add_argument("--fit", action="store_true",
                     help="read *_fit patch dirs (windows sized to lake extent)")
+    ap.add_argument("--append", action="store_true",
+                    help="merge --years into the existing lake_timeseries.json "
+                         "instead of replacing it")
     args = ap.parse_args()
 
+    out = DATA / "lake_timeseries.json"
     net, idx = load_model(args.model)
     series: dict[str, dict] = {}
     counts = {"ok": 0, "nodata": 0, "saturated": 0, "truncated": 0}
+    years_done: list[int] = []
+
+    if args.append:
+        if not out.exists():
+            raise SystemExit(f"--append needs an existing {out.name}; run without it first")
+        prev = json.loads(out.read_text(encoding="utf-8"))
+        # Areas from two different models or thresholds are not one series - the
+        # trend would fit the switch, not the lake.
+        for key in ("model", "threshold", "nir_filter"):
+            if prev.get(key) != getattr(args, key):
+                raise SystemExit(f"--append: {key}={getattr(args, key)!r} but "
+                                 f"{out.name} was built with {prev.get(key)!r}")
+        series = {lake["id"]: lake for lake in prev["lakes"]}
+        # re-running a year replaces it rather than double-counting it
+        years_done = [y for y in prev["years"] if y not in args.years]
+        for lake in series.values():
+            for y in args.years:
+                lake["years"].pop(str(y), None)
 
     for year in args.years:
         suffix = "_fit" if args.fit else ""
@@ -199,7 +225,6 @@ def main() -> None:
             elif edge > EDGE_LIMIT:
                 # the TARGET lake runs off the window: area is a lower bound
                 flag = "truncated"
-            counts[flag] += 1
 
             e = series.setdefault(lake_id, {
                 "id": lake_id,
@@ -219,13 +244,19 @@ def main() -> None:
             }
             if n % 200 == 0:
                 print(f"  {year}: {n}/{len(files)}", flush=True)
+        years_done.append(year)
         print(f"  {year}: done ({len(files)} lakes)", flush=True)
 
-    out = DATA / "lake_timeseries.json"
+    # counted over the whole merged series, so an appended file reports the
+    # same totals a from-scratch run would
+    for lake in series.values():
+        for v in lake["years"].values():
+            counts[v["flag"]] += 1
+
     out.write_text(json.dumps({
         "model": args.model, "threshold": args.threshold,
         "nir_filter": args.nir_filter, "nir_max": args.nir_max,
-        "years": args.years, "flag_counts": counts,
+        "years": sorted(years_done), "flag_counts": counts,
         "lakes": list(series.values()),
     }, indent=1), encoding="utf-8")
 

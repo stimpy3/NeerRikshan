@@ -1,0 +1,354 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  NeerRikshan - serverless glacial lake monitoring. Website and API cost nothing
+  while idle; the yearly model run rents compute only for its own duration.
+
+    visitor -> CloudFront -+-> S3 (site + thumbnails)
+                           +-> /api/* -> API Gateway -> Lambda -> S3 (results)
+    EventBridge Scheduler (15 Nov) -> ECS Fargate task -> Earth Engine + model -> S3
+
+Parameters:
+  GeeProject:
+    Type: String
+    Description: Google Cloud project registered for Earth Engine
+  GeeServiceAccountEmail:
+    Type: String
+    Description: Earth Engine service account the pipeline logs in as
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+    Description: VPC the pipeline task runs in (the default VPC is fine)
+  SubnetIds:
+    Type: List<AWS::EC2::Subnet::Id>
+    Description: Public subnets for the pipeline task
+
+Resources:
+  # ---------------------------------------------------------------- storage
+  # Private: pipeline results, the model, dated backups of each run, and the
+  # Earth Engine key under secrets/ (only the pipeline task can read that).
+  DataBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault: { SSEAlgorithm: AES256 }
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+
+  # The built React site and lake thumbnails. Also private - only CloudFront
+  # can read it (see SiteBucketPolicy), so there is one public entry point.
+  SiteBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+
+  SiteBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref SiteBucket
+      PolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal: { Service: cloudfront.amazonaws.com }
+            Action: s3:GetObject
+            Resource: !Sub "${SiteBucket.Arn}/*"
+            Condition:
+              StringEquals:
+                AWS:SourceArn: !Sub "arn:aws:cloudfront::${AWS::AccountId}:distribution/${Distribution}"
+
+  # ---------------------------------------------------------------- API
+  ApiRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal: { Service: lambda.amazonaws.com }
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: read-results
+          PolicyDocument:
+            Statement:
+              - Effect: Allow
+                Action: s3:GetObject
+                Resource: !Sub "${DataBucket.Arn}/data/*"
+              # ListBucket makes a missing file a clean 404 instead of AccessDenied
+              - Effect: Allow
+                Action: s3:ListBucket
+                Resource: !GetAtt DataBucket.Arn
+                Condition: { StringLike: { s3:prefix: "data/*" } }
+              - Effect: Allow
+                Action: s3:ListBucket
+                Resource: !GetAtt SiteBucket.Arn
+                Condition: { StringLike: { s3:prefix: "thumbnails/*" } }
+
+  # Code is a placeholder: deploy/deploy.sh uploads the real zip right after
+  # the stack is created, so app code changes never need a stack update.
+  ApiFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      Description: NeerRikshan API (FastAPI via Mangum)
+      Runtime: python3.12
+      Handler: lambda_handler.handler
+      Role: !GetAtt ApiRole.Arn
+      MemorySize: 512
+      Timeout: 15
+      Environment:
+        Variables:
+          DATA_BUCKET: !Ref DataBucket
+          SITE_BUCKET: !Ref SiteBucket
+      Code:
+        ZipFile: |
+          def handler(event, context):
+              return {"statusCode": 503, "body": "API code not uploaded yet"}
+
+  ApiLogs:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${ApiFunction}"
+      RetentionInDays: 30
+
+  # HTTP API "quick create": one catch-all route straight to the function.
+  HttpApi:
+    Type: AWS::ApiGatewayV2::Api
+    Properties:
+      Name: !Sub "${AWS::StackName}-api"
+      ProtocolType: HTTP
+      Target: !GetAtt ApiFunction.Arn
+
+  ApiInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref ApiFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${HttpApi}/*"
+
+  # ---------------------------------------------------------------- CDN
+  SiteOAC:
+    Type: AWS::CloudFront::OriginAccessControl
+    Properties:
+      OriginAccessControlConfig:
+        Name: !Sub "${AWS::StackName}-site"
+        OriginAccessControlOriginType: s3
+        SigningBehavior: always
+        SigningProtocol: sigv4
+
+  # The site routes /lakes/:id in the browser. S3 has no such file, so any
+  # path without a file extension is served the app shell instead.
+  SpaRewrite:
+    Type: AWS::CloudFront::Function
+    Properties:
+      Name: !Sub "${AWS::StackName}-spa-rewrite"
+      AutoPublish: true
+      FunctionConfig:
+        Comment: Serve index.html for client-side routes
+        Runtime: cloudfront-js-2.0
+      FunctionCode: |
+        function handler(event) {
+          var req = event.request;
+          if (req.uri.indexOf('.') === -1) { req.uri = '/index.html'; }
+          return req;
+        }
+
+  Distribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Enabled: true
+        Comment: NeerRikshan
+        DefaultRootObject: index.html
+        HttpVersion: http2
+        PriceClass: PriceClass_200      # includes India
+        Origins:
+          - Id: site
+            DomainName: !GetAtt SiteBucket.RegionalDomainName
+            S3OriginConfig: { OriginAccessIdentity: "" }
+            OriginAccessControlId: !GetAtt SiteOAC.Id
+          - Id: api
+            DomainName: !Sub "${HttpApi}.execute-api.${AWS::Region}.amazonaws.com"
+            CustomOriginConfig:
+              OriginProtocolPolicy: https-only
+              OriginSSLProtocols: [TLSv1.2]
+        DefaultCacheBehavior:
+          TargetOriginId: site
+          ViewerProtocolPolicy: redirect-to-https
+          CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6          # CachingOptimized
+          FunctionAssociations:
+            - EventType: viewer-request
+              FunctionARN: !GetAtt SpaRewrite.FunctionMetadata.FunctionARN
+        CacheBehaviors:
+          - PathPattern: /api/*
+            TargetOriginId: api
+            ViewerProtocolPolicy: redirect-to-https
+            AllowedMethods: [GET, HEAD, OPTIONS]
+            CachePolicyId: 4135ea2d-6df8-44a3-9df3-4b5a84be39ad        # CachingDisabled
+            OriginRequestPolicyId: b689b0a8-53d0-40ab-baf2-68738e2966ac # AllViewerExceptHostHeader
+
+  # ---------------------------------------------------------------- pipeline
+  PipelineRepo:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: !Sub "${AWS::StackName}-pipeline"
+      EmptyOnDelete: true
+      LifecyclePolicy:
+        LifecyclePolicyText: |
+          {"rules": [{"rulePriority": 1, "description": "keep last 3 images",
+            "selection": {"tagStatus": "any", "countType": "imageCountMoreThan", "countNumber": 3},
+            "action": {"type": "expire"}}]}
+
+  Cluster:
+    Type: AWS::ECS::Cluster
+    Properties:
+      ClusterName: !Sub "${AWS::StackName}"
+
+  PipelineLogs:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/${AWS::StackName}/pipeline"
+      RetentionInDays: 90
+
+  # Used by ECS itself to pull the image and write logs.
+  TaskExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal: { Service: ecs-tasks.amazonaws.com }
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
+
+  # Used by the pipeline code: only what scripts/cloud_pipeline.py touches.
+  TaskRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal: { Service: ecs-tasks.amazonaws.com }
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: pipeline
+          PolicyDocument:
+            Statement:
+              - Effect: Allow
+                Action: [s3:GetObject, s3:PutObject]
+                Resource: !Sub "${DataBucket.Arn}/*"
+              - Effect: Allow
+                Action: s3:PutObject
+                Resource: !Sub "${SiteBucket.Arn}/thumbnails/*"
+              - Effect: Allow
+                Action: [lambda:GetFunctionConfiguration, lambda:UpdateFunctionConfiguration]
+                Resource: !GetAtt ApiFunction.Arn
+
+  TaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: !Sub "${AWS::StackName}-pipeline"
+      RequiresCompatibilities: [FARGATE]
+      NetworkMode: awsvpc
+      Cpu: "2048"
+      Memory: "4096"
+      RuntimePlatform:
+        CpuArchitecture: X86_64
+        OperatingSystemFamily: LINUX
+      ExecutionRoleArn: !GetAtt TaskExecutionRole.Arn
+      TaskRoleArn: !GetAtt TaskRole.Arn
+      ContainerDefinitions:
+        - Name: pipeline
+          Image: !Sub "${PipelineRepo.RepositoryUri}:latest"
+          Essential: true
+          Environment:
+            - { Name: DATA_BUCKET, Value: !Ref DataBucket }
+            - { Name: SITE_BUCKET, Value: !Ref SiteBucket }
+            - { Name: API_FUNCTION, Value: !Ref ApiFunction }
+            - { Name: GEE_PROJECT, Value: !Ref GeeProject }
+            - { Name: GEE_SERVICE_ACCOUNT_EMAIL, Value: !Ref GeeServiceAccountEmail }
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref PipelineLogs
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: pipeline
+
+  # Outbound only: the task calls Earth Engine, S3 and Lambda; nothing calls it.
+  PipelineSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: NeerRikshan pipeline task - outbound only
+      VpcId: !Ref VpcId
+
+  SchedulerRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal: { Service: scheduler.amazonaws.com }
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: run-pipeline
+          PolicyDocument:
+            Statement:
+              - Effect: Allow
+                Action: ecs:RunTask
+                Resource: !Sub "arn:aws:ecs:${AWS::Region}:${AWS::AccountId}:task-definition/${AWS::StackName}-pipeline:*"
+              - Effect: Allow
+                Action: iam:PassRole
+                Resource: [!GetAtt TaskExecutionRole.Arn, !GetAtt TaskRole.Arn]
+
+  # 15 November, 07:30 IST. Mid-November so the last October scenes and their
+  # cloud scores have reached Earth Engine.
+  YearlySchedule:
+    Type: AWS::Scheduler::Schedule
+    Properties:
+      Name: !Sub "${AWS::StackName}-yearly"
+      Description: Yearly NeerRikshan update after the melt season
+      ScheduleExpression: cron(30 7 15 11 ? *)
+      ScheduleExpressionTimezone: Asia/Kolkata
+      FlexibleTimeWindow: { Mode: "OFF" }
+      Target:
+        Arn: !GetAtt Cluster.Arn
+        RoleArn: !GetAtt SchedulerRole.Arn
+        EcsParameters:
+          TaskDefinitionArn: !Ref TaskDefinition
+          LaunchType: FARGATE
+          NetworkConfiguration:
+            AwsvpcConfiguration:
+              AssignPublicIp: ENABLED
+              Subnets: !Ref SubnetIds
+              SecurityGroups: [!Ref PipelineSecurityGroup]
+
+Outputs:
+  SiteUrl:
+    Value: !Sub "https://${Distribution.DomainName}"
+  DistributionId:
+    Value: !Ref Distribution
+  DataBucketName:
+    Value: !Ref DataBucket
+  SiteBucketName:
+    Value: !Ref SiteBucket
+  ApiFunctionName:
+    Value: !Ref ApiFunction
+  RepositoryUri:
+    Value: !GetAtt PipelineRepo.RepositoryUri
+  ClusterName:
+    Value: !Ref Cluster
+  TaskDefinitionArn:
+    Value: !Ref TaskDefinition
+  PipelineSecurityGroupId:
+    Value: !Ref PipelineSecurityGroup
+  PipelineSubnetIds:
+    Value: !Join [",", !Ref SubnetIds]
+  PipelineLogGroup:
+    Value: !Ref PipelineLogs

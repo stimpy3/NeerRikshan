@@ -26,5 +26,10 @@ class Settings(BaseSettings):
     gee_service_account_email: str = ""
     gee_service_account_key_path: str = ""
 
+    # Set only on AWS (Lambda env vars). Empty means read from server/data on
+    # disk, which is what local development uses. See app.core.storage.
+    data_bucket: str = ""
+    site_bucket: str = ""
+
 
 settings = Settings()

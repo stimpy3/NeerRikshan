@@ -1,0 +1,15 @@
+# Everything the yearly pipeline needs on CPU-only compute (the Fargate image
+# built from server/Dockerfile): the API deps plus the model runtime.
+# Training is not done here.
+#
+#   pip install -r requirements-pipeline.txt
+#
+# The +cpu wheel comes from PyTorch's own index. The PyPI build bundles CUDA
+# (~2 GB of libraries a t3.small cannot use).
+-r requirements.txt
+
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch==2.13.0+cpu
+numpy==2.2.1
+scipy==1.18.0
+pillow==12.3.0

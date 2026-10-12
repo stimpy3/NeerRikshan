@@ -71,13 +71,12 @@ export default function DownstreamMap({ path, settlements, lake }) {
         const size = 8 + 14 * Math.sqrt(s.pop / biggest)
         el.style.cssText = `width:${size}px;height:${size}px;border-radius:50%;
           background:${FLOW};opacity:.75;border:1.5px solid #fff;cursor:pointer`
+        const label = s.name
+          ? `${s.name} — ~${s.pop.toLocaleString()} people · ${s.km} km downstream`
+          : `~${s.pop.toLocaleString()} people · ${s.km} km downstream`
         new Marker({ element: el })
           .setLngLat([s.lon, s.lat])
-          .setPopup(
-            new Popup({ offset: 8 }).setText(
-              `~${s.pop.toLocaleString()} people · ${s.km} km downstream`,
-            ),
-          )
+          .setPopup(new Popup({ offset: 8 }).setText(label))
           .addTo(map)
       }
 
@@ -103,13 +102,52 @@ export default function DownstreamMap({ path, settlements, lake }) {
     )
   }
 
+  // Named places, in downstream order, one entry each. The same town often
+  // spans several population cells, so dedupe by name and keep the nearest hit.
+  const places = []
+  for (const s of [...(settlements || [])].sort((a, b) => a.km - b.km)) {
+    if (!s.name) continue
+    const seen = places.find((p) => p.name === s.name)
+    if (seen) seen.pop = Math.max(seen.pop, s.pop)
+    else places.push({ name: s.name, km: s.km, pop: s.pop })
+  }
+  const unnamed = (settlements || []).filter((s) => !s.name).length
+
   return (
     <div>
       <div ref={boxRef} className="h-[260px] w-full border border-line" />
+
+      {places.length > 0 && (
+        <div className="mt-1.5 border border-line bg-canvas px-2 py-1.5">
+          <div className="font-sans text-[10px] uppercase tracking-wide text-muted">
+            Settlements in the path
+          </div>
+          <div className="mt-0.5 font-sans text-[11px] leading-relaxed text-ink">
+            {places.map((p, i) => (
+              <span key={p.name}>
+                {i > 0 && <span className="text-muted"> → </span>}
+                <span className="font-semibold">{p.name}</span>
+                <span className="text-muted">
+                  {' '}
+                  {p.km}&nbsp;km
+                </span>
+              </span>
+            ))}
+          </div>
+          {unnamed > 0 && (
+            <div className="mt-0.5 font-sans text-[10px] text-muted">
+              + {unnamed} inhabited cluster{unnamed > 1 ? 's' : ''} with no named
+              place within 12&nbsp;km
+            </div>
+          )}
+        </div>
+      )}
+
       <p className="mt-1 font-sans text-[10px] leading-snug text-muted">
         Red line = path water would follow downhill from the lake (HydroSHEDS
         terrain routing). Circles = inhabited clusters on that path, sized by
-        population; click for numbers. Place names come from the basemap.
+        population; click for numbers. Names are the nearest GeoNames settlement
+        to each cluster, not a claim that the whole town is in the flood corridor.
       </p>
     </div>
   )

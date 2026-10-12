@@ -227,7 +227,13 @@ export default function LakeMap({ data, flows, selectedId, onSelect, fitKey }) {
       container: containerRef.current,
       style: STYLE_URL,
       center: [86, 30],
-      zoom: 4.2,
+      zoom: 4.6,
+      // Every monitored lake sits between 73-95E and 27-36N, and the longest
+      // downstream trace reaches ~26N. Panning to the Gulf or the Pacific shows
+      // nothing and makes the watchlist look sparser than it is, so the camera
+      // is fenced to the Himalayan arc plus the plains the floods drain into.
+      minZoom: 4.2,
+      maxBounds: [[69, 21], [99, 40]],
     })
     mapRef.current = map
     // dev-only handle so the rendered layer can be inspected/asserted against
@@ -307,7 +313,10 @@ export default function LakeMap({ data, flows, selectedId, onSelect, fitKey }) {
       map.on('styledata', retry)
       return () => map.off('styledata', retry)
     }
-  }, [data, fitKey])
+    // flows is a dependency because it arrives on its own request: when the
+    // lakes land first, the corridors would otherwise never be added. Re-running
+    // is safe - sources are updated in place and the fit is keyed on fitKey.
+  }, [data, fitKey, flows])
 
   // Selection: highlight AND fly to it, so clicking a table row actually takes
   // you somewhere rather than silently recolouring an off-screen dot.

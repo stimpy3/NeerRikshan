@@ -1,0 +1,7 @@
+# What the API needs on AWS Lambda (deploy/deploy.sh bundles these).
+# Only the read path: no uvicorn (Lambda runs the app via Mangum), no Earth
+# Engine, no model. boto3 is provided by the Lambda Python runtime.
+fastapi==0.115.6
+pydantic-settings==2.7.1
+python-dotenv==1.0.1
+mangum==0.22.0

@@ -1,0 +1,11 @@
+# Keep the build context small: data/ alone holds ~6 GB of patches.
+# The Dockerfile copies the two static JSON files it needs explicitly.
+data/
+!data/himag_all.json
+!data/window_sizes.json
+.venv/
+venv/
+**/__pycache__/
+*.py[cod]
+.env
+logs/

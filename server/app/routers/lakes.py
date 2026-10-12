@@ -5,7 +5,8 @@ Serves the precomputed outputs of the offline pipeline:
     scripts/detect_change.py  -> data/lake_change.json
 
 Nothing here touches Earth Engine or the model - the API is a thin reader over
-committed artifacts, so responses are fast and reproducible.
+committed artifacts, so responses are fast and reproducible. Files come from
+server/data locally and from S3 when deployed (app.core.storage).
 
 Two data-quality ideas are carried through to the API rather than hidden,
 because a change number without them is misleading:
@@ -18,32 +19,31 @@ Clients are expected to surface both.
 
 from __future__ import annotations
 
-import json
 import math
 from functools import lru_cache
-from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Query
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, RedirectResponse
+
+from app.core import storage
 
 router = APIRouter(prefix="/lakes", tags=["lakes"])
 
-DATA_DIR = Path(__file__).resolve().parents[2] / "data"
-CHANGE = DATA_DIR / "lake_change.json"
-SERIES = DATA_DIR / "lake_timeseries.json"
-THUMBS = DATA_DIR / "thumbnails"
+CHANGE = "lake_change.json"
+SERIES = "lake_timeseries.json"
 
 
-def _load(path: Path) -> dict:
-    if not path.exists():
+def _load(name: str) -> dict:
+    doc = storage.read_json(name)
+    if doc is None:
         raise HTTPException(
             status_code=503,
             detail=(
-                f"{path.name} not found. Run the pipeline first: "
+                f"{name} not found. Run the pipeline first: "
                 "python -m scripts.run_inference && python -m scripts.detect_change"
             ),
         )
-    return json.loads(path.read_text(encoding="utf-8"))
+    return doc
 
 
 @lru_cache(maxsize=1)
@@ -58,10 +58,8 @@ def _exposure() -> dict:
     Optional: the map and table work without it, they simply cannot rank by
     consequence. Produced by scripts.trace_downstream.
     """
-    path = CHANGE.parent / "lake_exposure.json"
-    if not path.exists():
-        return {}
-    return json.loads(path.read_text(encoding="utf-8")).get("lakes", {})
+    doc = storage.read_json("lake_exposure.json")
+    return doc.get("lakes", {}) if doc else {}
 
 
 def _exposure_score(r: dict) -> float | None:
@@ -375,11 +373,9 @@ def lake_frames(lake_id: str):
     lake (only the watchlist is rendered by default), so gaps are normal and
     the client must not assume a contiguous series.
     """
-    if not THUMBS.exists():
-        return {"lake_id": lake_id, "frames": []}
     frames = []
-    for f in sorted(THUMBS.glob(f"{lake_id}_*.png")):
-        stem = f.stem
+    for name in storage.thumbnail_names(lake_id):
+        stem = name.removesuffix(".png")
         if stem.endswith("_ov"):
             continue
         year = stem.rsplit("_", 1)[-1]
@@ -397,7 +393,12 @@ def lake_frames(lake_id: str):
 def lake_frame(lake_id: str, year: int, overlay: bool = False):
     """One rendered thumbnail. `overlay` draws the model's water outline."""
     name = f"{lake_id}_{year}{'_ov' if overlay else ''}.png"
-    path = THUMBS / name
-    if not path.exists():
+    if storage.on_s3():
+        # deployed: the image sits in the site bucket and CloudFront serves it
+        # from the same domain, so send the browser there instead of piping
+        # the bytes through Lambda
+        return RedirectResponse(f"/thumbnails/{name}", status_code=302)
+    path = storage.thumbnail_path(name)
+    if path is None:
         raise HTTPException(status_code=404, detail=f"no frame {name}")
     return FileResponse(path, media_type="image/png")

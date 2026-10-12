@@ -1,0 +1,185 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "StackItself",
+      "Effect": "Allow",
+      "Action": "cloudformation:*",
+      "Resource": [
+        "arn:aws:cloudformation:ap-southeast-2:*:stack/neerrikshan/*",
+        "arn:aws:cloudformation:ap-southeast-2:*:changeSet/*"
+      ]
+    },
+    {
+      "Sid": "TemplateChecks",
+      "Effect": "Allow",
+      "Action": [
+        "cloudformation:ValidateTemplate",
+        "cloudformation:GetTemplateSummary",
+        "sts:GetCallerIdentity"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "ProjectBuckets",
+      "Effect": "Allow",
+      "Action": "s3:*",
+      "Resource": ["arn:aws:s3:::neerrikshan-*", "arn:aws:s3:::neerrikshan-*/*"]
+    },
+    {
+      "Sid": "ProjectLambda",
+      "Effect": "Allow",
+      "Action": "lambda:*",
+      "Resource": "arn:aws:lambda:ap-southeast-2:*:function:neerrikshan-*"
+    },
+    {
+      "Sid": "ProjectApiGateway",
+      "Effect": "Allow",
+      "Action": "apigateway:*",
+      "Resource": [
+        "arn:aws:apigateway:ap-southeast-2::/apis",
+        "arn:aws:apigateway:ap-southeast-2::/apis/*",
+        "arn:aws:apigateway:ap-southeast-2::/tags/*"
+      ]
+    },
+    {
+      "Sid": "CloudFrontHasNoNameScoping",
+      "Effect": "Allow",
+      "Action": "cloudfront:*",
+      "Resource": "*"
+    },
+    {
+      "Sid": "ProjectImageRepo",
+      "Effect": "Allow",
+      "Action": "ecr:*",
+      "Resource": "arn:aws:ecr:ap-southeast-2:*:repository/neerrikshan-*"
+    },
+    {
+      "Sid": "DockerLogin",
+      "Effect": "Allow",
+      "Action": "ecr:GetAuthorizationToken",
+      "Resource": "*"
+    },
+    {
+      "Sid": "ProjectEcs",
+      "Effect": "Allow",
+      "Action": "ecs:*",
+      "Resource": [
+        "arn:aws:ecs:ap-southeast-2:*:cluster/neerrikshan",
+        "arn:aws:ecs:ap-southeast-2:*:task/neerrikshan/*",
+        "arn:aws:ecs:ap-southeast-2:*:task-definition/neerrikshan-pipeline:*"
+      ]
+    },
+    {
+      "Sid": "EcsActionsWithoutResourceScoping",
+      "Effect": "Allow",
+      "Action": [
+        "ecs:CreateCluster",
+        "ecs:RegisterTaskDefinition",
+        "ecs:DeregisterTaskDefinition",
+        "ecs:DescribeTaskDefinition"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "ProjectLogs",
+      "Effect": "Allow",
+      "Action": "logs:*",
+      "Resource": [
+        "arn:aws:logs:ap-southeast-2:*:log-group:/neerrikshan/*",
+        "arn:aws:logs:ap-southeast-2:*:log-group:/aws/lambda/neerrikshan-*"
+      ]
+    },
+    {
+      "Sid": "ListLogGroups",
+      "Effect": "Allow",
+      "Action": "logs:DescribeLogGroups",
+      "Resource": "*"
+    },
+    {
+      "Sid": "ProjectSchedule",
+      "Effect": "Allow",
+      "Action": "scheduler:*",
+      "Resource": "arn:aws:scheduler:ap-southeast-2:*:schedule/default/neerrikshan-*"
+    },
+    {
+      "Sid": "EarthEngineKeyParameter",
+      "Effect": "Allow",
+      "Action": ["ssm:PutParameter", "ssm:GetParameter", "ssm:DeleteParameter", "ssm:AddTagsToResource"],
+      "Resource": "arn:aws:ssm:ap-southeast-2:*:parameter/neerrikshan/*"
+    },
+    {
+      "Sid": "EncryptParameterViaSsmOnly",
+      "Effect": "Allow",
+      "Action": ["kms:Encrypt", "kms:Decrypt", "kms:GenerateDataKey"],
+      "Resource": "*",
+      "Condition": {"StringEquals": {"kms:ViaService": "ssm.ap-southeast-2.amazonaws.com"}}
+    },
+    {
+      "Sid": "PipelineNetworking",
+      "Effect": "Allow",
+      "Action": [
+        "ec2:DescribeVpcs",
+        "ec2:DescribeSubnets",
+        "ec2:DescribeSecurityGroups",
+        "ec2:DescribeNetworkInterfaces",
+        "ec2:CreateSecurityGroup",
+        "ec2:DeleteSecurityGroup",
+        "ec2:AuthorizeSecurityGroupEgress",
+        "ec2:RevokeSecurityGroupEgress",
+        "ec2:CreateTags"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "ProjectRoles",
+      "Effect": "Allow",
+      "Action": [
+        "iam:CreateRole",
+        "iam:DeleteRole",
+        "iam:GetRole",
+        "iam:TagRole",
+        "iam:UntagRole",
+        "iam:UpdateAssumeRolePolicy",
+        "iam:PutRolePolicy",
+        "iam:GetRolePolicy",
+        "iam:DeleteRolePolicy",
+        "iam:ListRolePolicies",
+        "iam:ListAttachedRolePolicies"
+      ],
+      "Resource": "arn:aws:iam::*:role/neerrikshan-*"
+    },
+    {
+      "Sid": "OnlyTheTwoManagedPoliciesTheTemplateUses",
+      "Effect": "Allow",
+      "Action": ["iam:AttachRolePolicy", "iam:DetachRolePolicy"],
+      "Resource": "arn:aws:iam::*:role/neerrikshan-*",
+      "Condition": {
+        "ArnEquals": {
+          "iam:PolicyARN": [
+            "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole",
+            "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"
+          ]
+        }
+      }
+    },
+    {
+      "Sid": "PassProjectRolesOnlyToProjectServices",
+      "Effect": "Allow",
+      "Action": "iam:PassRole",
+      "Resource": "arn:aws:iam::*:role/neerrikshan-*",
+      "Condition": {
+        "StringEquals": {
+          "iam:PassedToService": ["lambda.amazonaws.com", "ecs-tasks.amazonaws.com", "scheduler.amazonaws.com"]
+        }
+      }
+    },
+    {
+      "Sid": "EcsFirstUseSetup",
+      "Effect": "Allow",
+      "Action": "iam:CreateServiceLinkedRole",
+      "Resource": "*",
+      "Condition": {"StringEquals": {"iam:AWSServiceName": "ecs.amazonaws.com"}}
+    }
+  ]
+}
